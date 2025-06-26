@@ -5,3 +5,4 @@ docs/
 logs/
 submits/
 weights/
+__pycache__
