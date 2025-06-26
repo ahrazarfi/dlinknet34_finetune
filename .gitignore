@@ -5,4 +5,7 @@ docs/
 logs/
 submits/
 weights/
-__pycache__
+__pycache__/
+wandb/
+CLAUDE.md
+

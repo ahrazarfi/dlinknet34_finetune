@@ -1,83 +1,40 @@
-import torch
-import torch.nn as nn
-from torch.autograd import Variable as V
 
-import cv2
-import numpy as np
+import torch, os, math, contextlib
+from torch.cuda.amp import autocast, GradScaler
+from torch.nn.utils import clip_grad_norm_
 
-class MyFrame():
-    def __init__(self, net, loss, lr=2e-4, evalmode = False):
-        self.net = net().cuda()
-        self.net = torch.nn.DataParallel(self.net, device_ids=range(torch.cuda.device_count()))
-        self.optimizer = torch.optim.Adam(params=self.net.parameters(), lr=lr)
-        #self.optimizer = torch.optim.RMSprop(params=self.net.parameters(), lr=lr)
-        self.loss = loss()
-        self.old_lr = lr
-        if evalmode:
-            for i in self.net.modules():
-                if isinstance(i, nn.BatchNorm2d):
-                    i.eval()
-        
-    def set_input(self, img_batch, mask_batch=None, img_id=None):
-        self.img = img_batch
-        self.mask = mask_batch
-        self.img_id = img_id
-        
-    def test_one_img(self, img):
-        pred = self.net.forward(img)
-        
-        pred[pred>0.5] = 1
-        pred[pred<=0.5] = 0
+class AMPFrame:
+    """ Generic training wrapper with AMP, clipping, and param-groups"""
+    def __init__(self, net_cls, loss_fn, lr=2e-4):
+        self.model = net_cls().cuda()
+        self.model = torch.nn.DataParallel(self.model)
+        self.loss_fn = loss_fn
+        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=lr)
+        self.scaler = GradScaler()
+        self.clip = 1.0
 
-        mask = pred.squeeze().cpu().data.numpy()
-        return mask
-    
-    def test_batch(self):
-        self.forward(volatile=True)
-        mask =  self.net.forward(self.img).cpu().data.numpy().squeeze(1)
-        mask[mask>0.5] = 1
-        mask[mask<=0.5] = 0
-        
-        return mask, self.img_id
-    
-    def test_one_img_from_path(self, path):
-        img = cv2.imread(path)
-        img = np.array(img, np.float32)/255.0 * 3.2 - 1.6
-        img = V(torch.Tensor(img).cuda())
-        
-        mask = self.net.forward(img).squeeze().cpu().data.numpy()#.squeeze(1)
-        mask[mask>0.5] = 1
-        mask[mask<=0.5] = 0
-        
-        return mask
-        
-    def forward(self, volatile=False):
-        self.img = V(self.img.cuda(), volatile=volatile)
-        if self.mask is not None:
-            self.mask = V(self.mask.cuda(), volatile=volatile)
-        
-    def optimize(self):
-        self.forward()
-        self.optimizer.zero_grad()
-        pred = self.net.forward(self.img)
-        loss = self.loss(self.mask, pred)
-        loss.backward()
-        self.optimizer.step()
-        return loss.data[0]
-        
-    def save(self, path):
-        torch.save(self.net.state_dict(), path)
-        
+    def train_batch(self, imgs, masks):
+        imgs, masks = imgs.cuda(non_blocking=True), masks.cuda(non_blocking=True)
+        self.optimizer.zero_grad(set_to_none=True)
+        with autocast():
+            logits = self.model(imgs)
+            loss = self.loss_fn(logits, masks)
+        self.scaler.scale(loss).backward()
+        clip_grad_norm_(self.model.parameters(), self.clip)
+        self.scaler.step(self.optimizer)
+        self.scaler.update()
+        return loss.detach().item()
+
+    @torch.no_grad()
+    def eval_batch(self, imgs, masks):
+        self.model.eval()
+        with autocast():
+            logits = self.model(imgs.cuda(non_blocking=True))
+            loss = self.loss_fn(logits, masks.cuda(non_blocking=True))
+        self.model.train()
+        return loss.detach().item()
+
+    def save(self, path): torch.save(self.model.state_dict(), path)
+
     def load(self, path):
-        self.net.load_state_dict(torch.load(path))
-    
-    def update_lr(self, new_lr, mylog, factor=False):
-        if factor:
-            new_lr = self.old_lr / new_lr
-        for param_group in self.optimizer.param_groups:
-            param_group['lr'] = new_lr
-
-        print >> mylog, 'update learning rate: %f -> %f' % (self.old_lr, new_lr)
-        # print 'update learning rate: %f -> %f' % (self.old_lr, new_lr)
-        print('update learning rate: %f -> %f' % (self.old_lr, new_lr))
-        self.old_lr = new_lr
+        self.model.load_state_dict(torch.load(path, map_location='cpu'))
