@@ -6,11 +6,37 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is the 1st place solution for the DeepGlobe Road Extraction Challenge, implementing semantic segmentation for satellite road extraction using PyTorch. The project uses D-LinkNet34 as the primary architecture with Test Time Augmentation (TTA) for improved performance.
 
+We need to use the pretrained weight from the DlinkNet34 model and finetune it.
+
+## Problem Statement
+
+Our goal is to finetune the pretrained model on rural Indian imagery to extract roads. Presently, the pretrained model is performing reasonably well,
+but we need to improve the performance, it is not able to detect complex topography of indian roads which. We have labeled data which of such roads in the same format this model is trained on, that is satellite image and mask. The major difference I can see from the images in the DeepGlobe dataset is that our images contain roads that are not that well defined, end abruptly or get merged abruptly in different roads. This is where the model is struggling the most as of now. It is also struggling to detect individual roads which are somehow not connected to the main road graph in a particular patch.
+
+## Methodology
+
+Make sure that all changes are reviewed before making them. We will be finetuning on a small subset from our custom dataset, you need to devise a
+strategy on how to conduct various experiments for our finetuning workflow. We also want to use Weights and Biases for tracking and logging our experiments. This includes tracking various model artifacts like outputs, loss, IOU etc. Also remember to use the same loss and IOU techniques used in
+original model.
+Upload qualitative panels every few epochs – 15-20 hard-case images with prediction-versus-ground-truth masks that reviewers can toggle in the UI.
+Version best checkpoints and full-resolution predictions as W&B artifacts, enabling later diffing and deterministic retrieval.
+
+## about the DLinkNet34 model
+In the DeepGlobe Road Extraction Challenge, the raw size of the images and masks provided is 1024×1024, and the roads in most images span the entire image. Still, roads have some natural properties, such as connectivity, complexity, etc. With these attributes in mind, D-Linknet is designed to receive 1024×1024 images as input and retain detailed spatial information. D-linknet can be divided into A, B, C three parts, called encoder, central part and decoder respectively.
+
+D-linknet uses ResNet34, pre-trained on the ImageNet dataset, as its encoder. ResNet34 was originally designed for the classification of 256×256 medium resolution images, but in this challenge the task was to segment roads from 1024×1024 high resolution satellite images. Considering narrowness, connectivity, complexity, and long road spans, it is important to increase the perceived range of features of the central part of the network and retain details. Pooling layer can multiply the felt range of features, but may reduce the resolution of the central feature map and reduce the spatial information. The empty convolution layer may be an ideal alternative to the pooling layer. D-linknet uses several empty convolution layers with skip-connection in the middle.
+
 ## Common Commands
+
+### Activating the environment
+```bash
+source dlink/bin/activate
+```
+Activates the python environment
 
 ### Training
 ```bash
-python train.py
+python3 train.py
 ```
 Trains the default D-LinkNet34 model. Training parameters:
 - Default batch size: 4 per GPU
@@ -20,13 +46,13 @@ Trains the default D-LinkNet34 model. Training parameters:
 
 ### Inference
 ```bash
-python test.py
+python3 test.py
 ```
 Runs inference with TTA on test images. The script automatically selects TTA strategy based on available GPU memory.
 
 ### Custom Dataset Testing
 ```bash
-python test_custom.py
+python3 test_custom.py
 ```
 For testing on custom datasets placed in `dataset/custom/`
 
