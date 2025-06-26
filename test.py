@@ -79,8 +79,8 @@ class TTAFrame:
         self.net = net_cls().cuda()
         self.net = nn.DataParallel(self.net, device_ids=range(torch.cuda.device_count()))
 
-        # bs = torch.cuda.device_count() * BATCHSIZE_PER_CARD
-        bs = 8
+        bs = torch.cuda.device_count() * BATCHSIZE_PER_CARD
+        # bs = 8
         if bs >= 8:
             self._tester  = self._test8     # 8-view TTA
             self.n_views  = 8
